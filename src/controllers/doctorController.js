@@ -4,22 +4,26 @@ import Doctor from "../models/Doctor.js";
 // Lấy danh sách bác sĩ + search + filter
 export const getDoctors = async (req, res) => {
   try {
-    const { name, specialty } = req.query;
+    const { name } = req.query;
     let query = {};
 
+    // search gần đúng theo fullName, nếu có name
     if (name) {
-      query.name = { $regex: name, $options: "i" }; // search gần đúng
-    }
-    if (specialty) {
-      query.specialty = { $regex: specialty, $options: "i" };
+      query.fullName = { $regex: name, $options: "i" };
     }
 
-    const doctors = await Doctor.find(query);
-    res.json(doctors);
+    const doctors = await Doctor.find(query)
+      .populate("specialty", "name description")
+      .sort({ fullName: 1 })
+      .lean();
+
+    res.json({ success: true, data: doctors });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("getDoctors error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 };
+
 
 export const getDoctorsBySpecialty = async (req, res) => {
   try {
