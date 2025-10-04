@@ -2,21 +2,94 @@ const mongoose = require("mongoose");
 const Appointment = require("../models/Appointment");
 const User = require("../models/User");
 const Doctor = require("../models/Doctor");
+
+exports.getAppointmentsByDoctor = async (req, res) => {
+  try {
+    const { userId } = req.params; // giờ truyền userId thay vì doctorId
+    const { date, status, patientName } = req.query;
+
+    if (!userId) {
+      return res.status(400).json({ message: "userId là bắt buộc" });
+    }
+
+    // Lấy thông tin user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "Không tìm thấy user" });
+    }
+
+    // Tìm doctor có email hoặc phoneNumber trùng user
+    const doctor = await Doctor.findOne({
+      $or: [{ email: user.email }, { phoneNumber: user.phoneNumber }],
+    });
+
+    if (!doctor) {
+      return res
+        .status(404)
+        .json({ message: "Không tìm thấy doctor ứng với user" });
+    }
+
+    let query = { doctorId: doctor._id };
+
+    // Lọc theo ngày (nếu có)
+    if (date) {
+      query.$expr = {
+        $eq: [
+          { $dateToString: { format: "%Y-%m-%d", date: "$appointmentDate" } },
+          date,
+        ],
+      };
+    }
+
+    // Lọc theo trạng thái (nếu có)
+    if (status) {
+      query.status = status;
+    }
+
+    // Query chính
+    let appointmentsQuery = Appointment.find(query)
+      .populate("userId", "fullName email phoneNumber")
+      .populate("clinicId", "name address")
+      .sort({ appointmentDate: 1 });
+
+    // Nếu có tìm theo tên bệnh nhân thì filter sau populate
+    let appointments = await appointmentsQuery;
+    if (patientName) {
+      const regex = new RegExp(patientName, "i");
+      appointments = appointments.filter((apt) =>
+        regex.test(apt.userId?.fullName || "")
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      count: appointments.length,
+      data: appointments,
+    });
+  } catch (error) {
+    console.error("Lỗi getAppointmentsByDoctor:", error);
+    res.status(500).json({ message: "Lỗi server", error: error.message });
+  }
+};
+
 // Lấy danh sách lịch hẹn của user
 exports.getUserAppointments = async (req, res) => {
   try {
-    const { userId } = req.params;
+    const { userId } = req.params; // => /api/appointments/user/:userId
     const { status, page = 1, limit = 10 } = req.query;
 
+    const pageNum = Number(page) || 1;
+    const limitNum = Number(limit) || 10;
+
     const filter = { userId: new mongoose.Types.ObjectId(userId) };
-    if (status) filter.status = status;
+    if (status) filter.status = status; // status phải đúng kiểu lưu trong DB
 
     const appointments = await Appointment.find(filter)
-      .populate("doctorId", "fullName specialty phoneNumber email") // doctor
-      .populate("userId", "fullName email phoneNumber") // user
+      .populate("doctorId", "fullName specialty phoneNumber email")
+      .populate("userId", "fullName email phoneNumber")
       .sort({ appointmentDate: -1 })
-      .skip((page - 1) * limit)
-      .limit(Number(limit))
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum)
       .lean();
 
     res.json({ success: true, data: appointments });

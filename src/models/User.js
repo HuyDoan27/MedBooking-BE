@@ -7,6 +7,11 @@ const userSchema = mongoose.Schema(
     email: { type: String, required: true, unique: true },
     phoneNumber: { type: String, required: true },
     password: { type: String, required: true },
+    role: {
+      type: String,
+      enum: ["user", "doctor", "admin"],
+      default: "user", 
+    },
   },
   { timestamps: true }
 );
@@ -22,4 +27,4 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-module.exports = mongoose.model("User", userSchema);  // ✅ Export đúng
+module.exports = mongoose.model("User", userSchema); // ✅ Export đúng
