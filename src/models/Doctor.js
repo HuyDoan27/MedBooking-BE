@@ -15,9 +15,14 @@ const doctorSchema = new mongoose.Schema({
     ref: "Clinic",
     required: true,
   }, // liên kết phòng khám thay vì lưu tên & địa chỉ thủ công
+  // If a clinic record isn't used, optionally store name/address here
+  clinicName: { type: String },
+  clinicAddress: { type: String },
   experience: { type: String }, // ví dụ: "10 năm"
   qualifications: [{ type: String }], // danh sách bằng cấp/chứng chỉ
   avatar: { type: String }, // ảnh bác sĩ
+  // Trạng thái tài khoản bác sĩ: 1 = duyệt, 2 = chờ duyệt (mặc định), 3 = từ chối
+  status: { type: Number, enum: [1, 2, 3], default: 2 },
   createdAt: { type: Date, default: Date.now },
 });
 
