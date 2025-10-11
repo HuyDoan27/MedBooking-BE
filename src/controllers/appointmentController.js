@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Appointment = require("../models/Appointment");
 const User = require("../models/User");
 const Doctor = require("../models/Doctor");
+const sendEmail = require("../utils/sendMail");
 
 exports.getAppointmentsByDoctor = async (req, res) => {
   try {
@@ -154,13 +155,7 @@ exports.updateAppointmentStatus = async (req, res) => {
     const { appointmentId } = req.params;
     const { status, reason, updatedBy = "user" } = req.body;
 
-    const validStatuses = [
-      "pending",
-      "confirmed",
-      "completed",
-      "cancelled",
-      "rescheduled",
-    ];
+    const validStatuses = ["pending", "completed", "cancelled", "upcoming"];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -168,7 +163,7 @@ exports.updateAppointmentStatus = async (req, res) => {
       });
     }
 
-    const appointment = await Appointment.findById(appointmentId);
+    const appointment = await Appointment.findById(appointmentId).populate("userId");
     if (!appointment) {
       return res.status(404).json({
         success: false,
@@ -176,16 +171,13 @@ exports.updateAppointmentStatus = async (req, res) => {
       });
     }
 
-    // Business logic for status changes
     const currentStatus = appointment.status;
 
-    // Validate status transition
     const validTransitions = {
-      pending: ["confirmed", "cancelled"],
-      confirmed: ["completed", "cancelled", "rescheduled"],
-      completed: [], // Cannot change from completed
-      cancelled: ["pending"], // Can reactivate if needed
-      rescheduled: ["pending", "confirmed", "cancelled"],
+      pending: ["upcoming", "cancelled"],
+      upcoming: ["completed"],
+      completed: [],
+      cancelled: [],
     };
 
     if (!validTransitions[currentStatus].includes(status)) {
@@ -195,26 +187,40 @@ exports.updateAppointmentStatus = async (req, res) => {
       });
     }
 
-    // Update appointment
     appointment.status = status;
-
     if (status === "cancelled") {
       appointment.cancellationReason = reason;
     }
 
-    // Add to status history
     appointment.statusHistory.push({
       status,
       timestamp: new Date(),
       reason,
-      updatedBy,
     });
 
     await appointment.save();
 
+    const user = appointment.userId;
+    if (user && user.email) {
+      const subject = `Cập nhật lịch hẹn của bạn (${appointment._id})`;
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+          <h2>Xin chào ${user.fullName || "Quý khách"},</h2>
+          <p>Trạng thái lịch hẹn của bạn đã được cập nhật:</p>
+          <p><b>Trạng thái mới:</b> <span style="color: #007bff;">${status}</span></p>
+          ${reason ? `<p><b>Lý do:</b> ${reason}</p>` : ""}
+          <p>Cảm ơn bạn đã sử dụng dịch vụ của chúng tôi!</p>
+          <hr />
+          <small>Email này được gửi tự động, vui lòng không trả lời.</small>
+        </div>
+      `;
+
+      await sendEmail(user.email, subject, htmlContent);
+    }
+
     res.json({
       success: true,
-      message: `Cập nhật trạng thái lịch hẹn thành ${status}`,
+      message: `Cập nhật trạng thái lịch hẹn thành ${status} và đã gửi email thông báo`,
       data: appointment,
     });
   } catch (error) {

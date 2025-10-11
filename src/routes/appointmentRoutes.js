@@ -16,7 +16,7 @@ router.post('/', authMiddleware(["user"]), appointmentController.createAppointme
 router.get('/:appointmentId', authMiddleware, appointmentController.getAppointmentById);
 
 // Update appointment status
-router.patch('/:appointmentId/status', authMiddleware(["doctor"]), appointmentController.updateAppointmentStatus);
+router.patch('/:appointmentId/status', authMiddleware(), appointmentController.updateAppointmentStatus);
 
 // Reschedule appointment
 router.patch('/:appointmentId/reschedule', authMiddleware, appointmentController.rescheduleAppointment);

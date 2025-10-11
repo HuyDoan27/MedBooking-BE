@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Doctor from "../models/Doctor.js";
+import sendEmail from "../utils/sendMail.js";
 
 // Lấy danh sách bác sĩ + search + filter
 export const getDoctors = async (req, res) => {
@@ -16,7 +17,7 @@ export const getDoctors = async (req, res) => {
     // nếu không truyền thì trả tất cả bác sĩ.
     if (req.query.status) {
       const statuses = String(req.query.status)
-        .split(',')
+        .split(",")
         .map((s) => Number(s.trim()))
         .filter((n) => [1, 2, 3].includes(n));
       if (statuses.length > 0) query.status = { $in: statuses };
@@ -34,6 +35,34 @@ export const getDoctors = async (req, res) => {
   }
 };
 
+// GET /api/doctors?status=2&clinic=clinicId
+export const getAllDoctors = async (req, res) => {
+  try {
+    const { status, clinic } = req.query;
+
+    // Tạo object filter động
+    const filter = {};
+    if (status) filter.status = Number(status);
+    if (clinic) filter.clinic = clinic;
+
+    const doctors = await Doctor.find(filter)
+      .populate("specialty", "name") // chỉ lấy trường 'name'
+      .populate("clinic", "name address") // chỉ lấy các field cần thiết
+      .sort({ createdAt: -1 }); // mới nhất lên đầu
+
+    res.status(200).json({
+      success: true,
+      message: "Lấy danh sách bác sĩ thành công",
+      data: doctors,
+    });
+  } catch (error) {
+    console.error("Error fetching doctors:", error);
+    res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy danh sách bác sĩ",
+    });
+  }
+};
 
 export const getDoctorsBySpecialty = async (req, res) => {
   try {
@@ -51,7 +80,7 @@ export const getDoctorsBySpecialty = async (req, res) => {
 
     if (req.query.status) {
       const statuses = String(req.query.status)
-        .split(',')
+        .split(",")
         .map((s) => Number(s.trim()))
         .filter((n) => [1, 2, 3].includes(n));
       if (statuses.length > 0) filter.status = { $in: statuses };
@@ -75,19 +104,20 @@ export const getDoctorsBySpecialty = async (req, res) => {
 export const getDoctorById = async (req, res) => {
   try {
     const doctor = await Doctor.findById(req.params.id).populate(
-      'specialty',
-      'name description'
+      "specialty",
+      "name description"
     );
 
-    if (!doctor) return res.status(404).json({ message: 'Không tìm thấy bác sĩ' });
+    if (!doctor)
+      return res.status(404).json({ message: "Không tìm thấy bác sĩ" });
     // Nếu client truyền status filter thì kiểm tra
     if (req.query.status) {
       const statuses = String(req.query.status)
-        .split(',')
+        .split(",")
         .map((s) => Number(s.trim()))
         .filter((n) => [1, 2, 3].includes(n));
       if (statuses.length > 0 && !statuses.includes(doctor.status)) {
-        return res.status(404).json({ message: 'Không tìm thấy bác sĩ' });
+        return res.status(404).json({ message: "Không tìm thấy bác sĩ" });
       }
     }
 
@@ -101,24 +131,24 @@ export const getDoctorById = async (req, res) => {
 export const createDoctor = async (req, res) => {
   try {
     // Debug: log incoming headers and body to diagnose missing fields
-    console.log('createDoctor called - headers:', {
-      'content-type': req.headers['content-type'],
+    console.log("createDoctor called - headers:", {
+      "content-type": req.headers["content-type"],
     });
-    console.log('createDoctor called - raw body:', req.body);
+    console.log("createDoctor called - raw body:", req.body);
     // Ensure that when a doctor registers via form, their status is set to 'pending' (2)
     const payload = { ...req.body };
     // Always set new doctor status to 'pending' (2) regardless of incoming payload
     payload.status = 2;
 
-  // If client provided clinicName/clinicAddress, keep them on the payload so they are persisted
-  if (req.body.clinicName) payload.clinicName = req.body.clinicName;
-  if (req.body.clinicAddress) payload.clinicAddress = req.body.clinicAddress;
+    // If client provided clinicName/clinicAddress, keep them on the payload so they are persisted
+    if (req.body.clinicName) payload.clinicName = req.body.clinicName;
+    if (req.body.clinicAddress) payload.clinicAddress = req.body.clinicAddress;
 
     const doctor = new Doctor(payload);
     await doctor.save();
     res.status(201).json({ success: true, data: doctor });
   } catch (err) {
-    console.error('createDoctor error:', err);
+    console.error("createDoctor error:", err);
     res.status(400).json({ success: false, message: err.message });
   }
 };
@@ -131,7 +161,7 @@ export const getRandomDoctors = async (req, res) => {
     const matchStage = { $match: {} };
     if (req.query.status) {
       const statuses = String(req.query.status)
-        .split(',')
+        .split(",")
         .map((s) => Number(s.trim()))
         .filter((n) => [1, 2, 3].includes(n));
       if (statuses.length > 0) matchStage.$match.status = { $in: statuses };
@@ -149,31 +179,95 @@ export const getRandomDoctors = async (req, res) => {
 export const updateDoctorStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, rejectReason } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: 'ID bác sĩ không hợp lệ' });
+    // Kiểm tra trạng thái hợp lệ
+    if (![1, 2, 3].includes(Number(status))) {
+      return res.status(400).json({
+        success: false,
+        message: "Trạng thái không hợp lệ. Chỉ chấp nhận 1, 2, hoặc 3.",
+      });
     }
 
-    const allowed = [1, 2, 3];
-    const numericStatus = Number(status);
-    if (!allowed.includes(numericStatus)) {
-      return res.status(400).json({ success: false, message: 'status phải là 1, 2 hoặc 3' });
+    // Nếu từ chối mà không có lý do -> báo lỗi
+    if (Number(status) === 3 && (!rejectReason || rejectReason.trim() === "")) {
+      return res.status(400).json({
+        success: false,
+        message: "Khi từ chối bác sĩ, bắt buộc phải nhập lý do.",
+      });
     }
 
-    const doctor = await Doctor.findByIdAndUpdate(
-      id,
-      { status: numericStatus },
-      { new: true }
-    ).populate('specialty', 'name description');
-
+    const doctor = await Doctor.findById(id);
     if (!doctor) {
-      return res.status(404).json({ success: false, message: 'Không tìm thấy bác sĩ' });
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy bác sĩ.",
+      });
     }
 
-    res.json({ success: true, data: doctor });
-  } catch (err) {
-    console.error('updateDoctorStatus error:', err);
-    res.status(500).json({ success: false, message: 'Lỗi server khi cập nhật trạng thái' });
+    doctor.status = Number(status);
+
+    if (Number(status) === 3) {
+      doctor.rejectReason = rejectReason;
+    } else {
+      doctor.rejectReason = "";
+    }
+
+    await doctor.save();
+
+    // --- Gửi email thông báo ---
+    let subject = "";
+    let htmlContent = "";
+
+    if (status === 1) {
+      subject = "Tài khoản bác sĩ của bạn đã được duyệt ✅";
+      htmlContent = `
+        <p>Xin chào <strong>${doctor.fullName}</strong>,</p>
+        <p>Tài khoản bác sĩ của bạn đã được <strong>duyệt thành công</strong>.</p>
+        <p>Bạn có thể đăng nhập và sử dụng hệ thống ngay.</p>
+        <br/>
+        <p>Trân trọng,<br/>Đội ngũ quản trị hệ thống</p>
+      `;
+    } else if (status === 3) {
+      subject = "Tài khoản bác sĩ của bạn bị từ chối ❌";
+      htmlContent = `
+        <p>Xin chào <strong>${doctor.fullName}</strong>,</p>
+        <p>Rất tiếc, tài khoản bác sĩ của bạn đã bị <strong>từ chối</strong>.</p>
+        <p><strong>Lý do:</strong> ${rejectReason}</p>
+        <p>Nếu có thắc mắc, vui lòng liên hệ lại với quản trị viên.</p>
+        <br/>
+        <p>Trân trọng,<br/>Đội ngũ quản trị hệ thống</p>
+      `;
+    } else {
+      subject = "Trạng thái tài khoản của bạn đã được cập nhật 🔄";
+      htmlContent = `
+        <p>Xin chào <strong>${doctor.fullName}</strong>,</p>
+        <p>Trạng thái tài khoản của bạn hiện đang là <strong>chờ duyệt</strong>.</p>
+        <p>Chúng tôi sẽ thông báo cho bạn ngay khi có kết quả mới.</p>
+        <br/>
+        <p>Trân trọng,<br/>Đội ngũ quản trị hệ thống</p>
+      `;
+    }
+
+    if (doctor.email) {
+      await sendEmail(doctor.email, subject, htmlContent);
+    }
+
+    res.status(200).json({
+      success: true,
+      message:
+        status === 1
+          ? "Đã duyệt bác sĩ và gửi email thông báo."
+          : status === 3
+          ? "Đã từ chối bác sĩ và gửi email thông báo."
+          : "Đã cập nhật trạng thái bác sĩ.",
+      data: doctor,
+    });
+  } catch (error) {
+    console.error("Error updating doctor status:", error);
+    res.status(500).json({
+      success: false,
+      message: "Lỗi server khi cập nhật trạng thái bác sĩ.",
+    });
   }
 };
