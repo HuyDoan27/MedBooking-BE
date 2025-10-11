@@ -5,6 +5,7 @@ const doctorRoutes = require("./routes/doctorRoutes");
 const appointmentRoutes = require('./routes/appointmentRoutes');
 const specialtyRoutes = require("./routes/specialtyRoutes"); 
 const clinicRoutes = require("./routes/clinicRoutes");
+const userRoutes = require("./routes/userRoutes");
 
 const app = express();
 
@@ -22,6 +23,8 @@ app.use('/api/appointments', appointmentRoutes);
 app.use("/api/specialties", specialtyRoutes);
 
 app.use("/api/clinics", clinicRoutes);
+
+app.use("/api/users", userRoutes);
 
 app.get("/", (req, res) => res.send("API is running..."));
 

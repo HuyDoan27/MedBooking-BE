@@ -1,4 +1,3 @@
-// models/Doctor.js
 const mongoose = require("mongoose");
 
 const doctorSchema = new mongoose.Schema({
@@ -9,20 +8,20 @@ const doctorSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: "Specialty",
     required: true,
-  }, // liên kết chuyên khoa
+  },
   clinic: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Clinic",
     required: true,
-  }, // liên kết phòng khám thay vì lưu tên & địa chỉ thủ công
-  // If a clinic record isn't used, optionally store name/address here
+  },
   clinicName: { type: String },
   clinicAddress: { type: String },
-  experience: { type: String }, // ví dụ: "10 năm"
-  qualifications: [{ type: String }], // danh sách bằng cấp/chứng chỉ
-  avatar: { type: String }, // ảnh bác sĩ
-  // Trạng thái tài khoản bác sĩ: 1 = duyệt, 2 = chờ duyệt (mặc định), 3 = từ chối
+  experience: { type: String },
+  qualifications: [{ type: String }],
+  avatar: { type: String },
+  // 1 = duyệt, 2 = chờ duyệt, 3 = từ chối
   status: { type: Number, enum: [1, 2, 3], default: 2 },
+  rejectReason: { type: String, default: "" }, // thêm dòng này
   createdAt: { type: Date, default: Date.now },
 });
 
