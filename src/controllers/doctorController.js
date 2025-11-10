@@ -1,26 +1,17 @@
 import mongoose from "mongoose";
 import Doctor from "../models/Doctor.js";
+import User from "../models/User.js"
 import sendEmail from "../utils/sendMail.js";
 
 // Lấy danh sách bác sĩ + search + filter
 export const getDoctors = async (req, res) => {
   try {
     const { name } = req.query;
-    let query = {};
+    let query = { status: 1 }; // ✅ cố định chỉ lấy bác sĩ đã duyệt
 
-    // search gần đúng theo fullName, nếu có name
+    // tìm gần đúng theo tên nếu có
     if (name) {
       query.fullName = { $regex: name, $options: "i" };
-    }
-
-    // Nếu client truyền status (ví dụ status=1 hoặc status=1,2) thì lọc theo status,
-    // nếu không truyền thì trả tất cả bác sĩ.
-    if (req.query.status) {
-      const statuses = String(req.query.status)
-        .split(",")
-        .map((s) => Number(s.trim()))
-        .filter((n) => [1, 2, 3].includes(n));
-      if (statuses.length > 0) query.status = { $in: statuses };
     }
 
     const doctors = await Doctor.find(query)
@@ -75,16 +66,9 @@ export const getDoctorsBySpecialty = async (req, res) => {
     }
 
     const filter = {
-      specialty: new mongoose.Types.ObjectId(specialtyId), // ✅ dùng `new`
+      specialty: new mongoose.Types.ObjectId(specialtyId),
+      status: 1, // ✅ chỉ lấy bác sĩ đã được duyệt
     };
-
-    if (req.query.status) {
-      const statuses = String(req.query.status)
-        .split(",")
-        .map((s) => Number(s.trim()))
-        .filter((n) => [1, 2, 3].includes(n));
-      if (statuses.length > 0) filter.status = { $in: statuses };
-    }
 
     const doctors = await Doctor.find(filter)
       .populate("specialty", "name description")
@@ -99,6 +83,7 @@ export const getDoctorsBySpecialty = async (req, res) => {
       .json({ success: false, message: "Lỗi server khi lấy danh sách bác sĩ" });
   }
 };
+
 
 // Lấy chi tiết bác sĩ
 export const getDoctorById = async (req, res) => {
@@ -130,48 +115,59 @@ export const getDoctorById = async (req, res) => {
 // Admin thêm bác sĩ
 export const createDoctor = async (req, res) => {
   try {
-    // Debug: log incoming headers and body to diagnose missing fields
-    console.log("createDoctor called - headers:", {
-      "content-type": req.headers["content-type"],
-    });
-    console.log("createDoctor called - raw body:", req.body);
-    // Ensure that when a doctor registers via form, their status is set to 'pending' (2)
     const payload = { ...req.body };
-    // Always set new doctor status to 'pending' (2) regardless of incoming payload
-    payload.status = 2;
+    payload.status = 2; // luôn đặt trạng thái mới là 'pending'
 
-    // If client provided clinicName/clinicAddress, keep them on the payload so they are persisted
     if (req.body.clinicName) payload.clinicName = req.body.clinicName;
     if (req.body.clinicAddress) payload.clinicAddress = req.body.clinicAddress;
 
     const doctor = new Doctor(payload);
     await doctor.save();
-    res.status(201).json({ success: true, data: doctor });
+
+    // --- Gửi email thông báo tạo tài khoản ---
+    if (doctor.email) {
+      const subject = "Tài khoản bác sĩ của bạn đã được tạo 🩺";
+      const htmlContent = `
+        <p>Xin chào <strong>${doctor.fullName}</strong>,</p>
+        <p>Tài khoản bác sĩ của bạn đã được <strong>tạo thành công</strong> trên hệ thống.</p>
+        <p>Trạng thái hiện tại: <strong>Chờ duyệt</strong>.</p>
+        <p>Chúng tôi sẽ thông báo ngay khi tài khoản được duyệt.</p>
+        <br/>
+        <p>Trân trọng,<br/>Đội ngũ quản trị hệ thống</p>
+      `;
+      await sendEmail(doctor.email, subject, htmlContent);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Tạo tài khoản bác sĩ thành công và đã gửi email thông báo.",
+      data: doctor
+    });
   } catch (err) {
     console.error("createDoctor error:", err);
     res.status(400).json({ success: false, message: err.message });
   }
 };
 
+
 // Lấy ngẫu nhiên 3-5 bác sĩ
 export const getRandomDoctors = async (req, res) => {
   try {
     // random số lượng trong khoảng 3 - 5
     const randomCount = Math.floor(Math.random() * 3) + 3; // 3, 4 hoặc 5
-    const matchStage = { $match: {} };
-    if (req.query.status) {
-      const statuses = String(req.query.status)
-        .split(",")
-        .map((s) => Number(s.trim()))
-        .filter((n) => [1, 2, 3].includes(n));
-      if (statuses.length > 0) matchStage.$match.status = { $in: statuses };
-    }
 
-    const agg = [matchStage, { $sample: { size: randomCount } }];
+    // chỉ lấy bác sĩ có status = 1
+    const agg = [
+      { $match: { status: 1 } },
+      { $sample: { size: randomCount } },
+    ];
+
     const doctors = await Doctor.aggregate(agg);
+
     res.json({ success: true, data: doctors });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("getRandomDoctors error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -181,7 +177,6 @@ export const updateDoctorStatus = async (req, res) => {
     const { id } = req.params;
     const { status, rejectReason } = req.body;
 
-    // Kiểm tra trạng thái hợp lệ
     if (![1, 2, 3].includes(Number(status))) {
       return res.status(400).json({
         success: false,
@@ -189,7 +184,6 @@ export const updateDoctorStatus = async (req, res) => {
       });
     }
 
-    // Nếu từ chối mà không có lý do -> báo lỗi
     if (Number(status) === 3 && (!rejectReason || rejectReason.trim() === "")) {
       return res.status(400).json({
         success: false,
@@ -206,14 +200,28 @@ export const updateDoctorStatus = async (req, res) => {
     }
 
     doctor.status = Number(status);
-
-    if (Number(status) === 3) {
-      doctor.rejectReason = rejectReason;
-    } else {
-      doctor.rejectReason = "";
-    }
-
+    doctor.rejectReason = Number(status) === 3 ? rejectReason : "";
     await doctor.save();
+
+    // ============ ✅ TẠO TÀI KHOẢN KHI ĐƯỢC DUYỆT =============
+    let newUser = null;
+    if (Number(status) === 1) {
+      const existingUser = await User.findOne({ email: doctor.email });
+
+      if (!existingUser) {
+        const defaultPassword = "123456";
+        newUser = new User({
+          fullName: doctor.fullName,
+          email: doctor.email,
+          phoneNumber: doctor.phoneNumber || "N/A",
+          password: defaultPassword,
+          role: "doctor",
+        });
+        await newUser.save();
+
+        console.log(`Tạo tài khoản cho bác sĩ ${doctor.fullName} thành công.`);
+      }
+    }
 
     // --- Gửi email thông báo ---
     let subject = "";
@@ -224,7 +232,12 @@ export const updateDoctorStatus = async (req, res) => {
       htmlContent = `
         <p>Xin chào <strong>${doctor.fullName}</strong>,</p>
         <p>Tài khoản bác sĩ của bạn đã được <strong>duyệt thành công</strong>.</p>
-        <p>Bạn có thể đăng nhập và sử dụng hệ thống ngay.</p>
+        <p>Bạn có thể đăng nhập bằng thông tin sau:</p>
+        <ul>
+          <li>Email: <strong>${doctor.email}</strong></li>
+          <li>Mật khẩu: <strong>123456</strong></li>
+        </ul>
+        <p>Vui lòng đổi mật khẩu sau khi đăng nhập để bảo mật tài khoản.</p>
         <br/>
         <p>Trân trọng,<br/>Đội ngũ quản trị hệ thống</p>
       `;
@@ -243,7 +256,6 @@ export const updateDoctorStatus = async (req, res) => {
       htmlContent = `
         <p>Xin chào <strong>${doctor.fullName}</strong>,</p>
         <p>Trạng thái tài khoản của bạn hiện đang là <strong>chờ duyệt</strong>.</p>
-        <p>Chúng tôi sẽ thông báo cho bạn ngay khi có kết quả mới.</p>
         <br/>
         <p>Trân trọng,<br/>Đội ngũ quản trị hệ thống</p>
       `;
@@ -257,11 +269,12 @@ export const updateDoctorStatus = async (req, res) => {
       success: true,
       message:
         status === 1
-          ? "Đã duyệt bác sĩ và gửi email thông báo."
+          ? "Đã duyệt bác sĩ, tạo tài khoản và gửi email thông báo."
           : status === 3
-          ? "Đã từ chối bác sĩ và gửi email thông báo."
-          : "Đã cập nhật trạng thái bác sĩ.",
+            ? "Đã từ chối bác sĩ và gửi email thông báo."
+            : "Đã cập nhật trạng thái bác sĩ.",
       data: doctor,
+      userCreated: newUser ? newUser.email : null,
     });
   } catch (error) {
     console.error("Error updating doctor status:", error);

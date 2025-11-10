@@ -8,6 +8,8 @@ router.get("/", clinicController.getClinics);
 
 router.post("/create", clinicController.createClinic);
 
+// router.get("/nearby", clinicController.getNearbyClinics);
+
 router.get("/:id/specialties", clinicController.getSpecialtiesByClinic);
 
 module.exports = router;
