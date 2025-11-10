@@ -1,5 +1,7 @@
 const User = require("../models/User");
 const generateToken = require("../utils/generateToken");
+const jwt = require("jsonwebtoken");
+const TokenBlacklist = require("../models/TokenBlacklist");
 
 // Đăng ký
 const register = async (req, res) => {
@@ -79,4 +81,24 @@ const login = async (req, res) => {
   }
 };
 
-module.exports = { register, login };
+const logout = async (req, res) => {
+  try {
+    const token = req.header("Authorization")?.replace("Bearer ", "");
+    if (!token) return res.status(400).json({ message: "Không có token" });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Lưu token vào blacklist với thời gian hết hạn trùng với token
+    await TokenBlacklist.create({
+      token,
+      expiresAt: new Date(decoded.exp * 1000),
+    });
+
+    res.status(200).json({ message: "Đăng xuất thành công" });
+  } catch (error) {
+    console.error("Logout error:", error);
+    res.status(500).json({ message: "Đã xảy ra lỗi khi đăng xuất" });
+  }
+};
+
+module.exports = { register, login, logout };

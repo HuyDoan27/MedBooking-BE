@@ -4,12 +4,14 @@ const {
   getUsers,
   createUser,
   getUser,
+  getUsersWithAppointments,
 } = require("../controllers/userController");
 
 const router = express.Router();
 
 router.get("/me", authMiddleware(), getUser);
-router.get("/", getUsers); // GET /api/users
-router.post("/", createUser); // POST /api/users
+router.get("/with-appointments", getUsersWithAppointments);
+router.get("/", getUsers); 
+router.post("/", createUser); 
 
 module.exports = router;

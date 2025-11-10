@@ -3,10 +3,11 @@ const Appointment = require("../models/Appointment");
 const User = require("../models/User");
 const Doctor = require("../models/Doctor");
 const sendEmail = require("../utils/sendMail");
+const moment = require('moment');
 
 exports.getAppointmentsByDoctor = async (req, res) => {
   try {
-    const { userId } = req.params; // giờ truyền userId thay vì doctorId
+    const { userId } = req.params;
     const { date, status, patientName } = req.query;
 
     if (!userId) {
@@ -21,7 +22,7 @@ exports.getAppointmentsByDoctor = async (req, res) => {
 
     // Tìm doctor có email hoặc phoneNumber trùng user
     const doctor = await Doctor.findOne({
-      $or: [{ email: user.email }, { phoneNumber: user.phoneNumber }],
+      $and: [{ email: user.email }, { phoneNumber: user.phoneNumber }],
     });
 
     if (!doctor) {
@@ -73,6 +74,58 @@ exports.getAppointmentsByDoctor = async (req, res) => {
   }
 };
 
+//lấy dsach lịch khám ngày hôm nay của bác sĩ
+exports.getTodayAppointmentsByDoctor = async (req, res) => {
+  try {
+    const { userId } = req.params; // userId từ client
+
+    if (!userId) {
+      return res.status(400).json({ message: "userId là bắt buộc" });
+    }
+
+    // Lấy thông tin user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "Không tìm thấy user" });
+    }
+
+    // Tìm doctor tương ứng với user
+    const doctor = await Doctor.findOne({
+      $and: [{ email: user.email }, { phoneNumber: user.phoneNumber }],
+    });
+    if (!doctor) {
+      return res.status(404).json({ message: "Không tìm thấy doctor ứng với user" });
+    }
+
+    // Ngày hôm nay
+    const today = moment().format("YYYY-MM-DD");
+
+    // Query lịch khám hôm nay
+    const appointments = await Appointment.find({
+      doctorId: doctor._id,
+      status : "upcoming",
+      $expr: {
+        $eq: [
+          { $dateToString: { format: "%Y-%m-%d", date: "$appointmentDate" } },
+          today,
+        ],
+      },
+    })
+      .populate("userId", "fullName email phoneNumber")
+      .populate("clinicId", "name address")
+      .sort({ appointmentDate: 1 });
+
+    res.status(200).json({
+      success: true,
+      count: appointments.length,
+      data: appointments,
+    });
+  } catch (error) {
+    console.error("Lỗi getTodayAppointmentsByDoctor:", error);
+    res.status(500).json({ message: "Lỗi server", error: error.message });
+  }
+};
+
 // Lấy danh sách lịch hẹn của user
 exports.getUserAppointments = async (req, res) => {
   try {
@@ -88,6 +141,7 @@ exports.getUserAppointments = async (req, res) => {
     const appointments = await Appointment.find(filter)
       .populate("doctorId", "fullName specialty phoneNumber email")
       .populate("userId", "fullName email phoneNumber")
+      .populate("clinicId")
       .sort({ appointmentDate: -1 })
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum)
@@ -230,6 +284,151 @@ exports.updateAppointmentStatus = async (req, res) => {
       message: "Lỗi server khi cập nhật trạng thái",
       error: error.message,
     });
+  }
+};
+
+//gửi thông tin bệnh cho bệnh nhân sau khám
+exports.submitMedicalReport = async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    const { condition, treatmentMethod, prescription, notes } = req.body;
+
+    // Kiểm tra dữ liệu đầu vào
+    if (!condition || !treatmentMethod) {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng cung cấp đầy đủ tình trạng bệnh và phương pháp điều trị",
+      });
+    }
+
+    // Tìm lịch hẹn
+    const appointment = await Appointment.findById(appointmentId).populate("userId");
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy lịch hẹn",
+      });
+    }
+
+    // Chỉ cho phép gửi báo cáo khi lịch đã completed
+    if (appointment.status !== "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Chỉ có thể gửi thông tin sau khi lịch khám đã hoàn thành (completed)",
+      });
+    }
+
+    // Cập nhật medical report
+    appointment.medicalReport = {
+      condition,
+      treatmentMethod,
+      prescription: prescription || [],
+      notes: notes || "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    await appointment.save();
+
+    // Gửi email thông báo cho bệnh nhân
+    const user = appointment.userId;
+    if (user && user.email) {
+      const subject = `Báo cáo kết quả khám bệnh (${appointment._id})`;
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+          <h2>Xin chào ${user.fullName || "Quý khách"},</h2>
+          <p>Bác sĩ đã gửi thông tin sau khi hoàn tất buổi khám của bạn:</p>
+          <p><b>Tình trạng bệnh:</b> ${condition}</p>
+          <p><b>Phương pháp điều trị:</b> ${treatmentMethod}</p>
+          ${prescription && prescription.length > 0
+          ? `
+                <p><b>Đơn thuốc:</b></p>
+                <ul>
+                  ${prescription
+            .map(
+              (p) =>
+                `<li>${p.medicine} - ${p.dosage || ""} (${p.duration || ""})</li>`
+            )
+            .join("")}
+                </ul>`
+          : ""
+        }
+          ${notes ? `<p><b>Ghi chú thêm:</b> ${notes}</p>` : ""}
+          <hr />
+          <small>Email này được gửi tự động, vui lòng không trả lời.</small>
+        </div>
+      `;
+
+      await sendEmail(user.email, subject, htmlContent);
+    }
+
+    res.json({
+      success: true,
+      message: "Bác sĩ đã gửi thông tin khám bệnh thành công",
+      data: appointment,
+    });
+  } catch (error) {
+    console.error("Error in submitMedicalReport:", error);
+    res.status(500).json({
+      success: false,
+      message: "Lỗi server khi gửi thông tin khám bệnh",
+      error: error.message,
+    });
+  }
+};
+
+// Lấy danh sách báo cáo bệnh án của một bệnh nhân (user)
+exports.getMedicalReportsByPatient = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "userId là bắt buộc" });
+    }
+
+    // Tìm các lịch hẹn của user có medicalReport
+    const reports = await Appointment.find({
+      userId: userId,
+      medicalReport: { $exists: true, $ne: null },
+    })
+      .populate("doctorId", "fullName email phoneNumber")
+      .sort({ appointmentDate: -1 })
+      .lean();
+
+    // Chuẩn hóa dữ liệu trả về để FE dễ hiển thị
+    const data = reports.map((apt) => ({
+      appointmentId: apt._id,
+      appointmentDate: apt.appointmentDate,
+      status: apt.status,
+      doctor: apt.doctorId
+        ? {
+          id: apt.doctorId._id,
+          name: apt.doctorId.fullName,
+          email: apt.doctorId.email,
+          phoneNumber: apt.doctorId.phoneNumber,
+        }
+        : null,
+      medicalReport: {
+        condition: apt.medicalReport?.condition || "",
+        treatmentMethod: apt.medicalReport?.treatmentMethod || "",
+        prescription:
+          Array.isArray(apt.medicalReport?.prescription) && apt.medicalReport.prescription.length > 0
+            ? apt.medicalReport.prescription.map((p) => ({
+              medicine: p.medicine || "",
+              dosage: p.dosage || "",
+              duration: p.duration || "",
+            }))
+            : [],
+        notes: apt.medicalReport?.notes || "",
+        createdAt: apt.medicalReport?.createdAt || null,
+        updatedAt: apt.medicalReport?.updatedAt || null,
+      },
+    }));
+
+    res.json({ success: true, count: data.length, data });
+  } catch (error) {
+    console.error("Error in getMedicalReportsByPatient:", error);
+    res.status(500).json({ success: false, message: "Lỗi server", error: error.message });
   }
 };
 
