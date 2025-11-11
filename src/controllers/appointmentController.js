@@ -103,7 +103,7 @@ exports.getTodayAppointmentsByDoctor = async (req, res) => {
     // Query lịch khám hôm nay
     const appointments = await Appointment.find({
       doctorId: doctor._id,
-      status : "upcoming",
+      status: "upcoming",
       $expr: {
         $eq: [
           { $dateToString: { format: "%Y-%m-%d", date: "$appointmentDate" } },
@@ -123,6 +123,73 @@ exports.getTodayAppointmentsByDoctor = async (req, res) => {
   } catch (error) {
     console.error("Lỗi getTodayAppointmentsByDoctor:", error);
     res.status(500).json({ message: "Lỗi server", error: error.message });
+  }
+};
+
+// lấy ra số lượng lịch khám theo trạng thái
+exports.getAppointmentStatusCount = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "Thiếu userId" });
+    }
+
+    // 🔹 Lấy thông tin user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy user" });
+    }
+
+    // 🔹 Tìm doctor tương ứng với user
+    const doctor = await Doctor.findOne({
+      $and: [{ email: user.email }, { phoneNumber: user.phoneNumber }],
+    });
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy doctor ứng với user này",
+      });
+    }
+
+    // 🔹 Gom nhóm theo trạng thái các lịch khám của doctor này
+    const statusCounts = await Appointment.aggregate([
+      {
+        $match: {
+          doctorId: new mongoose.Types.ObjectId(doctor._id),
+        },
+      },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // 🔹 Chuẩn hóa dữ liệu trả về
+    const formattedCounts = {
+      upcoming: 0,
+      completed: 0,
+      cancelled: 0,
+      pending: 0,
+    };
+
+    statusCounts.forEach((item) => {
+      formattedCounts[item._id] = item.count;
+    });
+
+    res.status(200).json({
+      success: true,
+      data: formattedCounts,
+    });
+  } catch (error) {
+    console.error("❌ Lỗi getAppointmentStatusCount:", error);
+    res.status(500).json({
+      success: false,
+      message: "Lỗi server khi thống kê trạng thái lịch khám",
+      error: error.message,
+    });
   }
 };
 
