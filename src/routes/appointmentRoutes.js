@@ -3,6 +3,9 @@ const router = express.Router();
 const appointmentController = require('../controllers/appointmentController');
 const authMiddleware = require('../middlewares/authMiddleware');
 
+//get count appointment by status
+router.get("/status-count/:userId", appointmentController.getAppointmentStatusCount);
+
 // route
 router.get("/:userId", appointmentController.getAppointmentsByDoctor);
 
